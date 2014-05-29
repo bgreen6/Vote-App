@@ -1,22 +1,57 @@
 var utils = require('../utils')
   , config = require('../config')
-  , twilio = require('twilio')
-  , events = require('../events');
+  , twiliosig = require('twiliosig')
+  , events = require('../events')
+  , io;
+
+module.exports = function(app, socketio) {
+  io = socketio;
+  app.get('/', index);
+  app.get('/events/:shortname', event);
+  app.post('/vote/sms', voteSMS);
+};
+
 
 /*
  * GET home page.
  */
 
-exports.index = function(req, res){
+var index = function(req, res){
   res.render('index', { title: 'Express' });
+};
+
+/*
+ * GET an event.
+ */
+
+var event = function(req, res){
+    
+    events.findBy('shortname', req.params.shortname, function(err, event) {
+        if (event) {
+            // remove sensitive data
+            event.voteoptions.forEach(function(vo){ 
+                delete vo.numbers;
+            });
+
+            res.render('event', {
+                name: event.name, shortname: event.shortname, state: event.state,
+                phonenumber: utils.formatPhone(event.phonenumber), voteoptions: JSON.stringify(event.voteoptions)   
+            });
+        }
+        else {
+            res.statusCode = 404;
+            res.send('We could not locate your event');
+        }
+    });
 };
 
 /*
  * POST new vote via SMS
  */
 
-exports.voteSMS = function(request, response) {
-    if (twilio.validateExpressRequest(request, config.twilio.key, {url: config.twilio.smsWebhook}) || config.disableTwilioSigCheck) {
+var voteSMS = function(request, response) {
+
+    if (twiliosig.valid(request, config.twilio.key) || config.disableTwilioSigCheck) {
         response.header('Content-Type', 'text/xml');
         var body = request.param('Body').trim();
         
@@ -57,6 +92,7 @@ exports.voteSMS = function(request, response) {
                     }
                     else {
                         console.log('Accepting vote: ' + event.name + ', ' + from);
+                        io.sockets.in(event.shortname).emit('vote', vote);
                         response.send('<Response><Sms>Thanks for your vote for ' + res.name + '. Powered by Twilio.</Sms></Response>');   
                     }
                 });
@@ -68,4 +104,3 @@ exports.voteSMS = function(request, response) {
         response.render('forbidden');
     }
 };
-
